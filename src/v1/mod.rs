@@ -24,7 +24,7 @@ mod tests {
 
         let cachet = enc_res.unwrap();
         //let cachet_bytes = cachet.as_bytes();
-        let dec_res = root.decrypt(cachet);
+        let dec_res = root.decrypt(&cachet);
 
         assert!(dec_res.is_ok());
 
@@ -58,7 +58,7 @@ mod tests {
 
         let cachet = encrypt_res.unwrap();
 
-        let decrypt_res = child.decrypt(cachet);
+        let decrypt_res = child.decrypt(&cachet);
 
         assert!(decrypt_res.is_ok());
 
@@ -86,7 +86,7 @@ mod tests {
 
         let cachet = encrypt_res.unwrap();
 
-        let decrypt_res = root.derive_and_decrypt(&sec_data_hash, cachet);
+        let decrypt_res = root.derive_and_decrypt(&sec_data_hash, &cachet);
 
         assert!(decrypt_res.is_ok());
 

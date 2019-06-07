@@ -138,7 +138,7 @@ impl KeyTree {
         Cachet::new(encrypted_data, self.chain(), self.skey()).map_err(|e| KeyTreeError::CachetError(e))
     }
 
-    pub fn decrypt (&self, cachet: Cachet) -> Result<Vec<u8>, KeyTreeError> {
+    pub fn decrypt (&self, cachet: &Cachet) -> Result<Vec<u8>, KeyTreeError> {
         if cachet.trust_chain() != *self.chain() {
             return Err(KeyTreeError::TrustChainComparisonFailure)
         }
@@ -157,7 +157,7 @@ impl KeyTree {
         child.encrypt(data_to_encrypt)
     }
 
-    pub fn derive_and_decrypt (&self, derivation_context: &[u8;32], cachet: Cachet) -> Result<Vec<u8>, KeyTreeError> {
+    pub fn derive_and_decrypt (&self, derivation_context: &[u8;32], cachet: &Cachet) -> Result<Vec<u8>, KeyTreeError> {
         let child = self.derive_key(&derivation_context)?;
         child.decrypt(cachet)
     }
