@@ -1,7 +1,8 @@
-use sodiumoxide::crypto::aead::xchacha20poly1305_ietf::{self as aead, Nonce, Key as AeadKey, Tag as AeadTag};
-use sodiumoxide::crypto::sign::ed25519::{self, PublicKey, SecretKey, Seed};
-use sodiumoxide::crypto::hash::sha256;
-use sodiumoxide::crypto::auth::hmacsha512256::{self, Tag as HmacTag, Key as HmacKey};
+use sodiumoxide::crypto::aead::xchacha20poly1305_ietf::{self as aead};
+use sodiumoxide::crypto::pwhash::argon2id13::{self as pbkdf};
+use sodiumoxide::crypto::sign::ed25519::{self as sign};
+use sodiumoxide::crypto::hash::sha256::{self as hash};
+use sodiumoxide::crypto::auth::hmacsha512256::{self as auth};
 use trustchain::v2::{TrustChain, TrustError};
 use cachet::v1::{Cachet,CachetError};
 use nom::{do_parse, take, map_opt, length_data, named, be_u16, be_u32, tag, verify};
@@ -10,11 +11,11 @@ use std::fmt;
 
 #[derive(PartialEq)] // TODO: does this need to be time-constant comparison?!!
 pub enum KeyTree {
-    Root   {key:AeadKey, skey:SecretKey, chain:TrustChain},
-    Second {key:AeadKey, skey:SecretKey, chain:TrustChain},
-    Third  {key:AeadKey, skey:SecretKey, chain:TrustChain},
-    Fourth {key:AeadKey, skey:SecretKey, chain:TrustChain},
-    Fith   {key:AeadKey, skey:SecretKey, chain:TrustChain},
+    Root   {key:aead::Key, skey:sign::SecretKey, chain:TrustChain},
+    Second {key:aead::Key, skey:sign::SecretKey, chain:TrustChain},
+    Third  {key:aead::Key, skey:sign::SecretKey, chain:TrustChain},
+    Fourth {key:aead::Key, skey:sign::SecretKey, chain:TrustChain},
+    Fith   {key:aead::Key, skey:sign::SecretKey, chain:TrustChain},
 }
 
 impl fmt::Debug for KeyTree {
@@ -33,7 +34,7 @@ pub enum KeyTreeError {
     PayloadDecryptionParseError,
 }
 
-named!(encrypted_payload<(Nonce, AeadTag, &[u8])>, do_parse!(
+named!(encrypted_payload<(aead::Nonce, aead::Tag, &[u8])>, do_parse!(
     _tag: tag!(b"KT") >>
     _ver: verify!(be_u16, |ver:u16| ver == 1) >>
     iv:  map_opt!(take!(24), |iv_bytes:&[u8] | aead::Nonce::from_slice(iv_bytes)) >>
@@ -43,7 +44,7 @@ named!(encrypted_payload<(Nonce, AeadTag, &[u8])>, do_parse!(
 ));
 
 impl KeyTree {
-    fn generation(&self) -> usize {
+    fn generation (&self) -> usize {
         match self {
             KeyTree::Root   {..} => 1,
             KeyTree::Second {..} => 2,
@@ -53,7 +54,7 @@ impl KeyTree {
         }
     }
 
-    fn key(&self) -> &AeadKey {
+    fn key (&self) -> &aead::Key {
         match self {
             KeyTree::Root   {key,..} => key,
             KeyTree::Second {key,..} => key,
@@ -63,7 +64,7 @@ impl KeyTree {
         }
     }
 
-    fn skey(&self) -> &SecretKey {
+    fn skey (&self) -> &sign::SecretKey {
         match self {
             KeyTree::Root   {skey,..} => skey,
             KeyTree::Second {skey,..} => skey,
@@ -73,7 +74,7 @@ impl KeyTree {
         }
     }
 
-    fn chain(&self) -> &TrustChain {
+    fn chain (&self) -> &TrustChain {
         match self {
             KeyTree::Root   {chain,..} => chain,
             KeyTree::Second {chain,..} => chain,
@@ -85,8 +86,8 @@ impl KeyTree {
 
     // The only public means of creating a KeyTree is from a root key secret.
     // All other variations of the KeyTree enum should be derived from the root key.
-    pub fn from_root (root_key:AeadKey) -> Result<KeyTree,KeyTreeError> {
-        let (pkey, skey) = ed25519::keypair_from_seed(&Seed(root_key.0));
+    pub fn from_root (root_key: aead::Key) -> Result<KeyTree,KeyTreeError> {
+        let (pkey, skey) = sign::keypair_from_seed(&sign::Seed(root_key.0));
         let chain =
             TrustChain::root_only_chain(pkey, Box::new(vec!(pkey)))
                 .map_err(|e| KeyTreeError::TrustError(e))?;
@@ -101,11 +102,11 @@ impl KeyTree {
         let pkey = self.chain().end_key().0;
         // concat the digested namespace with my public key, then digest the result
         // to derive out salt for deriving our new key.
-        let sha256::Digest(hkdf_salt) = sha256::hash(&concat_arrays(derivation_context,&pkey));
+        let hash::Digest(hkdf_salt) = hash::hash(&concat_arrays(derivation_context,&pkey));
         // get our derived aead key, verify key, and signing key
         let (d_key, d_pkey, d_skey) = derive_key(&self.key().0, &hkdf_salt, derivation_context);
 
-        let d_pkey_sig = ed25519::sign_detached(&d_pkey.0, &self.skey());
+        let d_pkey_sig = sign::sign_detached(&d_pkey.0, &self.skey());
 
         // We need trust-chain's ability to append in lockstep with each derivation, if we can
         // not extend the trust chain, then we can not derive further.
@@ -132,8 +133,8 @@ impl KeyTree {
         let aad = self.chain().as_bytes();
         let mut data  = Vec::with_capacity(data_to_encrypt.len());
         for byte in data_to_encrypt {data.push(*byte);}
-        let AeadTag(tag_bytes) = aead::seal_detached(data.as_mut_slice(), Some(&aad), &iv, self.key()); // [u8;16]
-        let Nonce(iv_bytes) = iv; // [u8;24]
+        let aead::Tag(tag_bytes) = aead::seal_detached(data.as_mut_slice(), Some(&aad), &iv, self.key()); // [u8;16]
+        let aead::Nonce(iv_bytes) = iv; // [u8;24]
         let encrypted_data = asemble_encrypted_payload(&iv_bytes,&tag_bytes,&data);
         Cachet::new(encrypted_data, self.chain(), self.skey()).map_err(|e| KeyTreeError::CachetError(e))
     }
@@ -184,9 +185,9 @@ fn asemble_encrypted_payload <'a> (aead_iv: &'a [u8;24], aead_tag: &'a [u8;16], 
 // which means only one round of 'expand' defined in 2.3 is needed for our usecase.
 fn hkdf <'a> (input_key_material: &'a[u8;32], salt: &'a[u8;32], info: &'a[u8;32]) -> [u8;32] {
     // rfc5869 2.2
-    let HmacTag(pseudo_random_key) = hmacsha512256::authenticate(
+    let auth::Tag(pseudo_random_key) = auth::authenticate(
         input_key_material, // ikm as hmac data
-        &HmacKey(*salt)  // salt as hmac key
+        &auth::Key(*salt)  // salt as hmac key
     );
 
     // rfc5869 2.3 concat T(0) | info | 0x01 (counter byte)
@@ -202,10 +203,10 @@ fn hkdf <'a> (input_key_material: &'a[u8;32], salt: &'a[u8;32], info: &'a[u8;32]
                                        0x01]; // counter byte
 
     // rfc5869 2.3 one round, since output size matches input
-    let HmacTag(t1) = hmacsha512256::authenticate(
+    let auth::Tag(t1) = auth::authenticate(
         //&[0x01], // no info,
         &info_with_counter, // no info,
-        &HmacKey(pseudo_random_key),
+        &auth::Key(pseudo_random_key),
     );
     t1
 }
@@ -214,10 +215,10 @@ fn hkdf <'a> (input_key_material: &'a[u8;32], salt: &'a[u8;32], info: &'a[u8;32]
 // that is available in newer versions of libsodium. We'll abstract ths for now.
 // once the KDF API is available, this can probably go away.
 // TODO: verify crypto safty/sanity of using an AEAD key as Ed25519 seed.
-fn derive_key <'a> (input_key_material: &'a [u8;32], salt: &'a [u8;32], info: &'a [u8;32]) -> (AeadKey, PublicKey, SecretKey) {
+fn derive_key <'a> (input_key_material: &'a [u8;32], salt: &'a [u8;32], info: &'a [u8;32]) -> (aead::Key, sign::PublicKey, sign::SecretKey) {
     let new_key_bytes = hkdf(input_key_material, salt, info);
-    let (verify_material, sign_material) = ed25519::keypair_from_seed(&Seed(new_key_bytes));
-    (AeadKey(new_key_bytes), verify_material, sign_material)
+    let (verify_material, sign_material) = sign::keypair_from_seed(&sign::Seed(new_key_bytes));
+    (aead::Key(new_key_bytes), verify_material, sign_material)
 }
 
 fn concat_arrays <'a> (l: &'a [u8;32], r: &'a [u8;32]) -> [u8;64] {
@@ -232,3 +233,73 @@ fn concat_arrays <'a> (l: &'a [u8;32], r: &'a [u8;32]) -> [u8;64] {
 }
 
 
+#[derive(Copy,Clone,Debug,PartialEq)]
+pub enum KeyTreePasswordError {
+    DecryptFail,
+    BadSalt,
+    BadNonce,
+    BadAad,
+    BadAeadTag,
+    BadRootKey,
+    DerivationFail,
+    OutOfMemory,
+    KeyTreeConstructionFail(KeyTreeError),
+}
+
+
+//--- Construct a KeyTree instance from either an aead key derived from a password
+//--- or a from an encrypted key, that is encrypted with a key derived from a password
+
+// derive keytree root from encrypted root key that is encrypted
+// with a key derived from a password
+pub fn root_from_encrypted_password <'a> (
+        encrypted_root_key : &'a [u8],
+        encrypted_root_aad : &'a [u8],
+        encrypted_root_nce : &'a [u8],
+        encrypted_root_tag : &'a [u8],
+        password           : &'a [u8],
+        password_salt      : &'a [u8],
+    ) -> Result<KeyTree, KeyTreePasswordError> {
+
+    let salt  = pbkdf::Salt::from_slice(password_salt).ok_or(KeyTreePasswordError::BadSalt)?;
+    let nonce = aead::Nonce::from_slice(encrypted_root_nce).ok_or(KeyTreePasswordError::BadNonce)?;
+    let tag   = aead::Tag::from_slice(encrypted_root_tag).ok_or(KeyTreePasswordError::BadAeadTag)?;
+    let aad   =
+        if encrypted_root_aad.len() == 0 {None}
+        else {Some(encrypted_root_aad)};
+
+    let mut der_key_bytes = [0u8;aead::KEYBYTES]; // 32 bytes
+
+    pbkdf::derive_key(&mut der_key_bytes, password, &salt, pbkdf::OPSLIMIT_SENSITIVE, pbkdf::MEMLIMIT_SENSITIVE).map_err(|_| KeyTreePasswordError::OutOfMemory)?;
+    let der_key = aead::Key::from_slice(&der_key_bytes).ok_or(KeyTreePasswordError::DerivationFail)?;
+
+    let mut buf = Vec::with_capacity(encrypted_root_key.len());
+    for b in encrypted_root_key { buf.push(*b); }
+
+    aead::open_detached(
+        &mut buf,
+        aad,
+        &tag,
+        &nonce,
+        &der_key
+    ).map_err(|_| KeyTreePasswordError::DecryptFail)?;
+
+    let root_key = aead::Key::from_slice(&buf).ok_or(KeyTreePasswordError::BadRootKey)?;
+
+    let tree = KeyTree::from_root(root_key).map_err(|e| KeyTreePasswordError::KeyTreeConstructionFail(e))?;
+    Ok(tree)
+}
+
+
+// derive keytree root from a key derived from a password
+pub fn root_from_password <'a> (
+        password: &'a [u8],
+        password_salt: &'a [u8],
+    ) -> Result<KeyTree, KeyTreePasswordError> {
+    let salt = pbkdf::Salt::from_slice(password_salt).ok_or(KeyTreePasswordError::BadSalt)?;
+    let mut key_bytes = [0u8;aead::KEYBYTES]; // 32 bytes
+    pbkdf::derive_key(&mut key_bytes, password, &salt, pbkdf::OPSLIMIT_SENSITIVE, pbkdf::MEMLIMIT_SENSITIVE).map_err(|_| KeyTreePasswordError::OutOfMemory)?;
+    let key = aead::Key::from_slice(&key_bytes).ok_or(KeyTreePasswordError::DerivationFail)?;
+    let tree = KeyTree::from_root(key).map_err(|e| KeyTreePasswordError::KeyTreeConstructionFail(e))?;
+    Ok(tree)
+}
