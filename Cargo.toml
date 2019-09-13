@@ -5,8 +5,8 @@ authors = ["Kirk Peterson <necrobious@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-sodiumoxide = "0.2"
+sodiumoxide = "0.2.4"
 nom = "4.2"
 byteorder = "1"
-trustchain = { git = "https://github.com/necrobious/trust-chain", rev = "27afa96"  }
-cachet = { git = "https://github.com/necrobious/cachet", rev = "a8c1218"  }
+trustchain = { git = "https://github.com/necrobious/trust-chain", rev = "3641974"  }
+cachet = { git = "https://github.com/necrobious/cachet", rev = "23736cf"  }

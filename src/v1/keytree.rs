@@ -74,7 +74,7 @@ impl KeyTree {
         }
     }
 
-    fn chain (&self) -> &TrustChain {
+    pub fn chain (&self) -> &TrustChain {
         match self {
             KeyTree::Root   {chain,..} => chain,
             KeyTree::Second {chain,..} => chain,
